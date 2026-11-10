@@ -35,10 +35,20 @@ class AgentTests(unittest.TestCase):
             id="call-2",
             function=SimpleNamespace(name="get_telemetry", arguments="{}"),
         )
+        third_tool_call = SimpleNamespace(
+            id="call-3",
+            function=SimpleNamespace(name="get_telemetry", arguments="{}"),
+        )
         agent.client.chat.side_effect = [
             SimpleNamespace(
                 message=SimpleNamespace(
                     tool_calls=[tool_call, second_tool_call],
+                    content=None,
+                )
+            ),
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    tool_calls=[third_tool_call],
                     content=None,
                 )
             ),
@@ -56,15 +66,19 @@ class AgentTests(unittest.TestCase):
                 "The vehicle is disarmed.",
             )
         sleep.assert_called_once_with(2)
-        self.assertEqual(agent.client.chat.call_args_list[0].kwargs["tool_choice"], "REQUIRED")
-        self.assertEqual(agent.client.chat.call_args_list[1].kwargs["tool_choice"], "NONE")
-        self.assertEqual(controller.get_telemetry.call_count, 2)
+        requests = [item.kwargs for item in agent.client.chat.call_args_list]
+        self.assertEqual(len(requests), 3)
+        for request in requests:
+            self.assertIn("tools", request)
+            self.assertNotIn("tool_choice", request)
+            self.assertEqual(request["model"], "command-a-plus-05-2026")
+        self.assertEqual(controller.get_telemetry.call_count, 3)
         tool_messages = [
             item for item in agent.messages if isinstance(item, dict) and item.get("role") == "tool"
         ]
         self.assertEqual(
             [item["tool_call_id"] for item in tool_messages],
-            ["call-1", "call-2"],
+            ["call-1", "call-2", "call-3"],
         )
 
 

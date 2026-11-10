@@ -20,6 +20,9 @@ bounded set of MAVLink commands. It expects a human pilot to stay in control.
 The app waits for an autopilot heartbeat before opening the chat. The default
 MAVLink endpoint is a loopback-only UDP listener; do not expose it to an
 untrusted network. Telemetry and prompts are sent to Cohere for tool use.
+The default Cohere model is `command-a-plus-05-2026`, which Cohere's tool-use
+example uses. The app does not send `tool_choice`, which that model does not
+support.
 Tools requested together are executed sequentially with a minimum
 `TOOL_CALL_DELAY_S` pause between calls (default 2 seconds; allowed range
 1–30 seconds). Calls that depend on a prior action's outcome or updated

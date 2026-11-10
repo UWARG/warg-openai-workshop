@@ -27,18 +27,15 @@ class CohereDroneAgent:
 
     def respond(self, user_text: str) -> str:
         self.messages.append({"role": "user", "content": user_text})
-        for tool_round in range(2):
+        for _ in range(6):
             response = self.client.chat(
                 model=self.model,
                 messages=self.messages,
                 tools=self.tools.definitions,
-                tool_choice="REQUIRED" if tool_round == 0 else "NONE",
             )
             message = response.message
             calls = message.tool_calls or []
             if not calls:
-                if tool_round == 0:
-                    raise RuntimeError("Cohere did not return the required tool call")
                 text = "\n".join(
                     block.text
                     for block in (message.content or [])
@@ -47,10 +44,6 @@ class CohereDroneAgent:
                 self.messages.append(message)
                 return text or "(The model returned no text.)"
 
-            if tool_round == 1:
-                raise RuntimeError(
-                    "Cohere returned a tool call after tool use was disabled"
-                )
             self.messages.append(message)
             for index, call in enumerate(calls):
                 if index > 0:
@@ -80,4 +73,4 @@ class CohereDroneAgent:
                         ],
                     }
                 )
-        raise RuntimeError("Cohere tool-use round limit reached")
+        raise RuntimeError("Cohere exceeded the maximum tool-use rounds")
