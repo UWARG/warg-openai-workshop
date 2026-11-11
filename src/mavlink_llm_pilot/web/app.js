@@ -152,14 +152,23 @@ async function sendMessage() {
 }
 
 async function watchChatJob(jobId) {
-  let actionVersion = 0;
+  let renderedToolEvents = 0;
   while (true) {
     const response = await fetch(`/api/chat/${jobId}`, { cache: "no-store" });
     const job = await readResponse(response);
     if (!response.ok) throw new Error(job.detail || job.error || "Chat request failed");
-    if (job.action_version > actionVersion) {
-      actionVersion = job.action_version;
-      addToolMessage(jobId, job.action, job.arguments, job.status === "approval_required");
+    if (job.tool_events.length > renderedToolEvents) {
+      const newEvents = job.tool_events.slice(renderedToolEvents);
+      newEvents.forEach((event) => {
+        addToolMessage(
+          jobId,
+          event.action,
+          event.arguments,
+          event.needs_approval,
+          event.approval_generation,
+        );
+      });
+      renderedToolEvents = job.tool_events.length;
     }
     if (job.status === "complete") {
       addMessage("assistant", job.response || "");
@@ -170,31 +179,89 @@ async function watchChatJob(jobId) {
   }
 }
 
-function addToolMessage(jobId, action, arguments_, needsApproval) {
+function addToolMessage(jobId, action, arguments_, needsApproval, approvalGeneration) {
   const node = document.createElement("div");
   node.className = "message tool";
-  node.innerHTML = `<span class="message-tag">FLIGHT TOOL // ${needsApproval ? "AWAITING APPROVAL" : "EXECUTING"}</span><div class="message-content"><p><strong></strong><br><code></code></p></div>`;
+  node.innerHTML = `<span class="message-tag">FLIGHT TOOL // ${needsApproval ? "AWAITING APPROVAL" : "EXECUTING"}</span><div class="message-content"><div class="tool-chain-item"><span class="tool-index">•</span><div><strong></strong><pre><code></code></pre></div></div></div>`;
   node.querySelector("strong").textContent = `${action}()`;
   node.querySelector("code").textContent = JSON.stringify(arguments_, null, 2);
   if (needsApproval) {
     const controls = document.createElement("div");
     controls.className = "approval-controls";
+    const note = document.createElement("span");
+    note.className = "approval-note";
+    note.textContent = "Approve this tool call to continue";
     controls.innerHTML = '<button class="approve">APPROVE</button><button class="deny">DENY</button>';
-    controls.querySelector(".approve").onclick = () => resolveApproval(jobId, true, controls);
-    controls.querySelector(".deny").onclick = () => resolveApproval(jobId, false, controls);
+    controls.prepend(note);
+    controls.querySelector(".approve").onclick = () => resolveApproval(
+      jobId,
+      true,
+      controls,
+      approvalGeneration,
+    );
+    controls.querySelector(".deny").onclick = () => resolveApproval(
+      jobId,
+      false,
+      controls,
+      approvalGeneration,
+    );
     node.appendChild(controls);
   }
   $("chat-log").appendChild(node);
   $("chat-log").scrollTop = $("chat-log").scrollHeight;
 }
 
-async function resolveApproval(jobId, approved, controls) {
+async function resolveApproval(jobId, approved, controls, approvalGeneration) {
   controls.querySelectorAll("button").forEach((button) => { button.disabled = true; });
-  controls.querySelector(approved ? ".approve" : ".deny").textContent = approved ? "APPROVED" : "DENIED";
-  const response = await fetch(`/api/chat/${jobId}/approval?approved=${approved}`, { method: "POST" });
-  if (!response.ok) {
-    const body = await readResponse(response);
-    addMessage("assistant", `ERROR: ${body.detail || body.error || "Could not submit approval."}`);
+  const selected = controls.querySelector(approved ? ".approve" : ".deny");
+  selected.textContent = approved ? "APPROVING..." : "DENYING...";
+  let lastError = null;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const generation = approvalGeneration === undefined
+      ? ""
+      : `&generation=${approvalGeneration}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    try {
+      const response = await fetch(
+        `/api/chat/${jobId}/approval?approved=${approved}${generation}`,
+        { method: "POST", signal: controller.signal },
+      );
+      if (response.ok) {
+        selected.textContent = approved ? "APPROVED" : "DENIED";
+        return;
+      }
+      if (response.status !== 409) {
+        const body = await readResponse(response);
+        lastError = body.detail || body.error || "Could not submit approval.";
+        break;
+      }
+      const status = await readApprovalStatus(jobId);
+      if (status && status.status !== "approval_required") {
+        selected.textContent = approved ? "APPROVED" : "DENIED";
+        return;
+      }
+    } catch (error) {
+      if (error.name !== "AbortError") {
+        lastError = error.message || "Could not submit approval.";
+      }
+    } finally {
+      clearTimeout(timeout);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  controls.querySelectorAll("button").forEach((button) => { button.disabled = false; });
+  selected.textContent = approved ? "APPROVE" : "DENY";
+  addMessage("assistant", `ERROR: ${lastError || "Approval was not accepted."}`);
+}
+
+async function readApprovalStatus(jobId) {
+  try {
+    const response = await fetch(`/api/chat/${jobId}`, { cache: "no-store" });
+    if (!response.ok) return null;
+    return await response.json();
+  } catch (_error) {
+    return null;
   }
 }
 

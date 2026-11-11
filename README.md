@@ -14,7 +14,7 @@ bounded set of MAVLink commands. It expects a human pilot to stay in control.
 
    ```powershell
    uv sync
-   uv run mavlink-llm-pilot
+   uv run mavlink-llm-pilot-cli
    ```
 
 To run the dark web dashboard and chat UI:
@@ -67,6 +67,7 @@ Use a safe test area, maintain visual line of sight, and keep Mission Planner
 available for immediate manual control. A MAVLink command being accepted does
 not prove the aircraft reached its target. The LLM must not be used as the
 sole flight-safety mechanism.
+
 
 ## Development
 

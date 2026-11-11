@@ -12,7 +12,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from .agent import CohereDroneAgent
+from .agent import CohereDroneAgent, ToolApproval
 from .config import Settings
 from .mavlink import MavlinkController
 from .safety import SafetyPolicy
@@ -35,6 +35,8 @@ class JobStatus(BaseModel):
     response: str | None = None
     action: str | None = None
     arguments: dict[str, Any] | None = None
+    actions: list[dict[str, Any]] = Field(default_factory=list)
+    tool_events: list[dict[str, Any]] = Field(default_factory=list)
     action_version: int = 0
     error: str | None = None
 
@@ -48,7 +50,15 @@ class ChatJob:
     arguments: dict[str, Any] | None = None
     error: str | None = None
     approved: bool = False
+    approval_granted: bool = False
+    approval_denied: bool = False
+    approval_generation: int = 0
+    approval_decision: bool | None = None
+    last_approval_generation: int | None = None
+    last_approval_decision: bool | None = None
     action_version: int = 0
+    actions: list[dict[str, Any]] = field(default_factory=list)
+    tool_events: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -58,6 +68,7 @@ class WebState:
     tools: DroneTools
     agent: CohereDroneAgent
     lock: threading.RLock
+    chat_lock: threading.Lock = field(default_factory=threading.Lock)
     jobs: dict[str, ChatJob] = field(default_factory=dict)
     current_job: ChatJob | None = None
     auto_approve: bool = False
@@ -68,26 +79,97 @@ class WebState:
             return False
         if self.auto_approve:
             return True
-        if job.action != action or job.arguments != arguments:
-            self.observe(action, arguments)
-        if not self.auto_approve:
-            job.status = "approval_required"
-        job.event.wait()
-        return job.approved
+        if job.approval_granted:
+            job.approval_granted = False
+            return True
+        return False
 
-    def observe(self, action: str, arguments: dict[str, Any]) -> None:
+    def observe(
+        self, action: str, arguments: dict[str, Any], increment: bool = True
+    ) -> None:
         job = self.current_job
         if job is not None:
             job.action = action
             job.arguments = arguments
-            job.action_version += 1
+            if increment:
+                job.action_version += 1
+                job.actions = [{"action": action, "arguments": arguments}]
+
+    def observe_batch(
+        self, calls: list[tuple[str, dict[str, Any]]]
+    ) -> bool | ToolApproval:
+        job = self.current_job
+        if job is None:
+            return False
+        job.actions = [
+            {"action": action, "arguments": arguments}
+            for action, arguments in calls
+        ]
+        job.action = calls[0][0] if calls else None
+        job.arguments = calls[0][1] if calls else None
+        job.action_version += 1
+        batch_id = job.action_version
+        action, arguments = calls[0]
+        has_flight_action = action != "get_telemetry"
+        if not has_flight_action:
+            job.approval_granted = False
+            job.tool_events.extend(
+                {
+                    "batch_id": batch_id,
+                    "action": action,
+                    "arguments": arguments,
+                    "needs_approval": False,
+                }
+                for action, arguments in calls
+            )
+            return ToolApproval(True)
+        if self.auto_approve:
+            job.tool_events.extend(
+                {
+                    "batch_id": batch_id,
+                    "action": action,
+                    "arguments": arguments,
+                    "needs_approval": False,
+                }
+                for action, arguments in calls
+            )
+            return ToolApproval(True)
+        if job.approval_denied:
+            return ToolApproval(False)
+        job.approval_generation += 1
+        approval_generation = job.approval_generation
+        job.approval_decision = None
+        job.approval_granted = False
+        job.approval_denied = False
+        job.event.clear()
+        job.status = "approval_required"
+        job.tool_events.extend(
+            {
+                "batch_id": batch_id,
+                "approval_generation": approval_generation,
+                "action": action,
+                "arguments": arguments,
+                "needs_approval": True,
+            }
+            for action, arguments in calls
+        )
+        while (
+            job.approval_generation == approval_generation
+            and job.approval_decision is None
+        ):
+            job.event.wait()
+        return ToolApproval(job.approval_decision is True, skip_delay=True)
 
     def telemetry(self) -> dict[str, Any]:
         with self.lock:
             return self.controller.get_telemetry()
 
-    def chat(self, job: ChatJob, message: str, auto_approve: bool) -> str:
+    def execute_tool(self, name: str, arguments: dict[str, Any]) -> Any:
         with self.lock:
+            return self.tools.execute(name, arguments)
+
+    def chat(self, job: ChatJob, message: str, auto_approve: bool) -> str:
+        with self.chat_lock:
             self.current_job = job
             self.auto_approve = auto_approve
             try:
@@ -109,12 +191,13 @@ def create_app(settings: Settings) -> FastAPI:
         state.controller,
         settings,
         SafetyPolicy(settings, confirmation=state.confirm),
-        tool_observer=state.observe,
     )
     state.agent = CohereDroneAgent(
         settings.cohere_api_key,
         settings.model,
         state.tools,
+        tool_batch_observer=state.observe_batch,
+        tool_executor=state.execute_tool,
     )
 
     @asynccontextmanager
@@ -182,18 +265,37 @@ def create_app(settings: Settings) -> FastAPI:
             response=job.response,
             action=job.action,
             arguments=job.arguments,
+            actions=job.actions,
+            tool_events=job.tool_events,
             action_version=job.action_version,
             error=job.error,
         )
 
     @app.post("/api/chat/{job_id}/approval")
-    async def chat_approval(job_id: str, approved: bool) -> dict[str, str]:
+    async def chat_approval(
+        job_id: str, approved: bool, generation: int | None = None
+    ) -> dict[str, str]:
         job = state.jobs.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Chat request not found")
+        if (
+            generation is not None
+            and generation == job.last_approval_generation
+            and approved == job.last_approval_decision
+        ):
+            return {"status": "accepted"}
+        if job.approval_denied:
+            return {"status": "already_denied"}
         if job.status != "approval_required":
             raise HTTPException(status_code=409, detail="No approval is pending")
+        if generation is not None and generation != job.approval_generation:
+            raise HTTPException(status_code=409, detail="Approval is no longer pending")
         job.approved = approved
+        job.last_approval_generation = job.approval_generation
+        job.last_approval_decision = approved
+        job.approval_decision = approved
+        job.approval_granted = approved
+        job.approval_denied = not approved
         job.status = "running"
         job.event.set()
         return {"status": "accepted"}

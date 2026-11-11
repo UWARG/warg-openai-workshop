@@ -1,6 +1,7 @@
 import json
 import time
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Callable
 
 import cohere
 
@@ -14,16 +15,38 @@ being accepted. Explain tool failures clearly. Tool calls in one response run
 sequentially with a delay, but do not batch actions that depend on each other's
 results or on updated telemetry; make those requests in separate turns. Keep all
 motion conservative. The operator remains responsible for visual line of sight,
-legal operation, failsafes, and immediate control."""
+legal operation, failsafes, and immediate control. When a request contains a
+sequence of independent actions, return the complete sequence as tool calls
+when possible; the application executes returned calls in order."""
 
 MAX_TOOL_ROUNDS = 12
 
+
+@dataclass(frozen=True)
+class ToolApproval:
+    approved: bool
+    skip_delay: bool = False
+
+
 class CohereDroneAgent:
-    def __init__(self, api_key: str, model: str, tools: DroneTools) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        tools: DroneTools,
+        tool_batch_observer: Callable[
+            [list[tuple[str, dict[str, Any]]]], bool | ToolApproval
+        ]
+        | None = None,
+        tool_executor: Callable[[str, dict[str, Any]], Any] | None = None,
+    ) -> None:
         self.client = cohere.ClientV2(api_key)
         self.model = model
         self.tools = tools
         self.tool_call_delay_s = tools.settings.tool_call_delay_s
+        self.tool_batch_observer = tool_batch_observer
+        self.tool_executor = tool_executor or tools.execute
+        self._last_tool_execution_at: float | None = None
         self.messages: list[Any] = [{"role": "system", "content": SYSTEM_PROMPT}]
 
     def respond(self, user_text: str) -> str:
@@ -46,14 +69,40 @@ class CohereDroneAgent:
                 return text or "(The model returned no text.)"
 
             self.messages.append(message)
-            for index, call in enumerate(calls):
-                if index > 0:
-                    time.sleep(self.tool_call_delay_s)
+            parsed_calls: list[tuple[Any, dict[str, Any]]] = []
+            for call in calls:
                 try:
-                    arguments = json.loads(call.function.arguments or "{}")
-                    result = {
-                        "result": self.tools.execute(call.function.name, arguments)
-                    }
+                    parsed_calls.append(
+                        (call, json.loads(call.function.arguments or "{}"))
+                    )
+                except (ValueError, TypeError) as error:
+                    parsed_calls.append((call, {"_parse_error": str(error)}))
+
+            for index, (call, arguments) in enumerate(parsed_calls):
+                try:
+                    approved = True
+                    skip_delay = False
+                    if self.tool_batch_observer is not None:
+                        approval = self.tool_batch_observer(
+                            [(call.function.name, arguments)]
+                        )
+                        if isinstance(approval, ToolApproval):
+                            approved = approval.approved
+                            skip_delay = approval.skip_delay
+                        else:
+                            approved = approval
+                    if not approved:
+                        result = {"error": "Operator denied this tool call."}
+                    elif "_parse_error" in arguments:
+                        result = {"error": arguments["_parse_error"]}
+                    else:
+                        if skip_delay:
+                            self._last_tool_execution_at = time.monotonic()
+                        else:
+                            self._wait_between_tools()
+                        result = {
+                            "result": self.tool_executor(call.function.name, arguments)
+                        }
                 except (
                     OSError,
                     ValueError,
@@ -75,3 +124,11 @@ class CohereDroneAgent:
                     }
                 )
         raise RuntimeError("Cohere exceeded the maximum tool-use rounds")
+
+    def _wait_between_tools(self) -> None:
+        if self._last_tool_execution_at is not None:
+            elapsed = time.monotonic() - self._last_tool_execution_at
+            remaining = self.tool_call_delay_s - elapsed
+            if remaining > 0:
+                time.sleep(remaining)
+        self._last_tool_execution_at = time.monotonic()
