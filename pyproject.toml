@@ -6,12 +6,15 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "cohere>=7.3.1",
+    "fastapi>=0.162.4",
     "pymavlink>=2.4.50",
     "python-dotenv>=1.2.4",
+    "uvicorn[standard]>=0.54.0",
 ]
 
 [project.scripts]
-mavlink-llm-pilot = "mavlink_llm_pilot.cli:main"
+mavlink-llm-pilot-cli = "mavlink_llm_pilot.cli:main"
+mavlink-llm-pilot-web = "mavlink_llm_pilot.web:main"
 
 [build-system]
 requires = ["uv_build>=0.10.0,<0.11.0"]

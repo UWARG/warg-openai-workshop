@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MAVLINK // PILOT CONSOLE</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <div class="eyebrow">MAVLINK // PILOT CONSOLE</div>
+          <h1>Flight systems dashboard</h1>
+        </div>
+        <div class="connection"><span id="connection-dot"></span><span id="connection-label">CONNECTING</span></div>
+      </header>
+
+      <section class="grid">
+        <div class="dashboard">
+          <div class="hero-card panel">
+            <div class="hero-label">CURRENT FLIGHT MODE</div>
+            <div class="hero-value" id="mode">—</div>
+            <div class="hero-meta"><span id="armed">DISARMED</span><span id="last-update">Waiting for telemetry</span></div>
+          </div>
+
+          <div class="metrics">
+            <article class="metric panel"><span>RELATIVE ALTITUDE</span><strong id="altitude">—</strong><small>m AGL</small></article>
+            <article class="metric panel"><span>GROUND SPEED</span><strong id="speed">—</strong><small>m/s</small></article>
+            <article class="metric panel"><span>HEADING</span><strong id="heading">—</strong><small>degrees</small></article>
+            <article class="metric panel"><span>BATTERY</span><strong id="battery">—</strong><small id="voltage">—</small></article>
+          </div>
+
+          <div class="split">
+            <article class="panel data-panel">
+              <div class="panel-title">POSITION / NAVIGATION</div>
+              <div class="data-row"><span>LATITUDE</span><strong id="latitude">—</strong></div>
+              <div class="data-row"><span>LONGITUDE</span><strong id="longitude">—</strong></div>
+              <div class="data-row"><span>GPS FIX</span><strong id="gps-fix">—</strong></div>
+              <div class="data-row"><span>SATELLITES</span><strong id="satellites">—</strong></div>
+            </article>
+            <article class="panel data-panel attitude">
+              <div class="panel-title">ATTITUDE</div>
+              <div class="attitude-grid">
+                <div><span>ROLL</span><strong id="roll">—</strong><small>°</small></div>
+                <div><span>PITCH</span><strong id="pitch">—</strong><small>°</small></div>
+                <div><span>YAW</span><strong id="yaw">—</strong><small>°</small></div>
+              </div>
+              <div class="horizon" aria-label="Artificial horizon">
+                <div id="horizon-line"></div>
+                <div class="horizon-marker"></div>
+                <div class="horizon-scale"><span>10</span><span>5</span><span>0</span><span>5</span><span>10</span></div>
+              </div>
+            </article>
+          </div>
+          <div class="panel telemetry-footer">
+            <span>VERTICAL RATE <b id="vertical-speed">—</b> m/s</span>
+            <span>LOCAL NED <b id="local-position">—</b></span>
+            <span>LINK <b id="link-age">—</b></span>
+          </div>
+        </div>
+
+        <aside class="chat panel">
+          <div class="chat-header"><div><div class="eyebrow">COHERE // COMMAND</div><h2>Flight assistant</h2></div><span class="live-badge">TOOL CALLS</span></div>
+          <div class="chat-log" id="chat-log">
+            <div class="message assistant"><span class="message-tag">PILOT AI</span><p>Telemetry link ready. Ask me to inspect the vehicle or request an action.</p></div>
+          </div>
+          <div class="chat-controls">
+            <label class="confirm"><input type="checkbox" id="confirm-live" /> Auto Approve Flight Commands</label>
+            <div class="composer">
+              <textarea id="message" rows="2" placeholder="Ask about the drone or issue a command..."></textarea>
+              <button class="voice" id="voice" title="Start voice input" aria-label="Start voice input">MIC</button>
+              <button class="send" id="send">SEND</button>
+            </div>
+            <div class="voice-status" id="voice-status">Voice input uses your browser's speech recognition when available.</div>
+          </div>
+        </aside>
+      </section>
+      <footer>DIRECT PILOT SUPERVISION REQUIRED <span>•</span> MAVLINK TELEMETRY <span>•</span> LIVE COMMANDS ARE CONFIRM-GATED</footer>
+    </main>
+    <script src="/assets/app.js"></script>
+  </body>
+</html>

@@ -17,6 +17,19 @@ bounded set of MAVLink commands. It expects a human pilot to stay in control.
    uv run mavlink-llm-pilot
    ```
 
+To run the dark web dashboard and chat UI:
+
+```powershell
+uv run mavlink-llm-pilot-web
+```
+
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The dashboard polls
+MAVLink telemetry every 1.5 seconds. The chat uses the same Cohere tool-calling
+agent as the CLI. Browser speech recognition is available in supported browsers
+such as Chrome; typed input remains available everywhere. Checking the live
+confirmation box is required for a web chat request that may execute a flight
+command.
+
 The app waits for an autopilot heartbeat before opening the chat. The default
 MAVLink endpoint is a loopback-only UDP listener; do not expose it to an
 untrusted network. Telemetry and prompts are sent to Cohere for tool use.

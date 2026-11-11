@@ -29,10 +29,12 @@ class DroneTools:
         controller: MavlinkController,
         settings: Settings,
         policy: SafetyPolicy,
+        tool_observer: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> None:
         self.controller = controller
         self.settings = settings
         self.policy = policy
+        self.tool_observer = tool_observer
         self.handlers: dict[str, Callable[[dict[str, Any]], Any]] = {
             "get_telemetry": self._get_telemetry,
             "takeoff": self._takeoff,
@@ -151,6 +153,8 @@ class DroneTools:
             raise ValueError(f"Unknown drone tool: {name}")
         if not isinstance(arguments, dict):
             raise ValueError("Tool arguments must be a JSON object")
+        if self.tool_observer is not None:
+            self.tool_observer(name, arguments)
         return self.handlers[name](arguments)
 
     def _get_telemetry(self, arguments: dict[str, Any]) -> Any:

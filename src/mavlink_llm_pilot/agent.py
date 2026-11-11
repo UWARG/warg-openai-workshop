@@ -16,6 +16,7 @@ results or on updated telemetry; make those requests in separate turns. Keep all
 motion conservative. The operator remains responsible for visual line of sight,
 legal operation, failsafes, and immediate control."""
 
+MAX_TOOL_ROUNDS = 12
 
 class CohereDroneAgent:
     def __init__(self, api_key: str, model: str, tools: DroneTools) -> None:
@@ -27,7 +28,7 @@ class CohereDroneAgent:
 
     def respond(self, user_text: str) -> str:
         self.messages.append({"role": "user", "content": user_text})
-        for _ in range(6):
+        for _ in range(MAX_TOOL_ROUNDS):
             response = self.client.chat(
                 model=self.model,
                 messages=self.messages,
