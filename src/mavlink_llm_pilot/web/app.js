@@ -116,6 +116,17 @@ async function pollTelemetry() {
   }
 }
 
+async function loadProviderInfo() {
+  try {
+    const response = await fetch("/api/config", { cache: "no-store" });
+    if (!response.ok) return;
+    const config = await response.json();
+    setText("llm-label", `${String(config.provider).toUpperCase()} // ${config.model}`);
+  } catch (_error) {
+    // Keep the generic label if runtime configuration is unavailable.
+  }
+}
+
 function addMessage(role, text) {
   const node = document.createElement("div");
   node.className = `message ${role}`;
@@ -303,3 +314,4 @@ function setupVoice() {
 $("send").addEventListener("click", sendMessage);
 $("message").addEventListener("keydown", (event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); sendMessage(); } });
 setupVoice(); pollTelemetry(); setInterval(pollTelemetry, 1500);
+loadProviderInfo();

@@ -8,11 +8,12 @@ import uuid
 from typing import Any
 
 from cohere.core.api_error import ApiError
+from openai import APIError
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from .agent import CohereDroneAgent, ToolApproval
+from .agent import CohereDroneAgent, OpenAIDroneAgent, ToolApproval, create_agent
 from .config import Settings
 from .mavlink import MavlinkController
 from .safety import SafetyPolicy
@@ -66,7 +67,7 @@ class WebState:
     settings: Settings
     controller: MavlinkController
     tools: DroneTools
-    agent: CohereDroneAgent
+    agent: CohereDroneAgent | OpenAIDroneAgent
     lock: threading.RLock
     chat_lock: threading.Lock = field(default_factory=threading.Lock)
     jobs: dict[str, ChatJob] = field(default_factory=dict)
@@ -192,8 +193,14 @@ def create_app(settings: Settings) -> FastAPI:
         settings,
         SafetyPolicy(settings, confirmation=state.confirm),
     )
-    state.agent = CohereDroneAgent(
-        settings.cohere_api_key,
+    api_key = (
+        settings.cohere_api_key
+        if settings.provider == "cohere"
+        else settings.openai_api_key
+    )
+    state.agent = create_agent(
+        settings.provider,
+        api_key,
         settings.model,
         state.tools,
         tool_batch_observer=state.observe_batch,
@@ -228,6 +235,10 @@ def create_app(settings: Settings) -> FastAPI:
         except (RuntimeError, OSError, TimeoutError) as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
 
+    @app.get("/api/config")
+    async def runtime_config() -> dict[str, str]:
+        return {"provider": settings.provider, "model": settings.model}
+
     @app.post("/api/chat", response_model=ChatResponse)
     async def chat(request: ChatRequest) -> ChatResponse:
         job_id = uuid.uuid4().hex
@@ -242,8 +253,8 @@ def create_app(settings: Settings) -> FastAPI:
                     request.confirm_live,
                 )
                 job.status = "complete"
-            except ApiError as error:
-                job.error = f"Cohere API error: {error}"
+            except (ApiError, APIError) as error:
+                job.error = f"{settings.provider.title()} API error: {error}"
                 job.status = "error"
             except (RuntimeError, OSError, TimeoutError, ValueError) as error:
                 job.error = str(error)

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 import cohere
+from openai import OpenAI
 
 from .tools import DroneTools
 
@@ -12,12 +13,14 @@ for every request that needs drone data or an action; never claim an action ran
 without a tool result. The aircraft is expected to be in GUIDED mode for flight
 commands. Never infer telemetry, location, arrival, or safety from a command
 being accepted. Explain tool failures clearly. Tool calls in one response run
-sequentially with a delay, but do not batch actions that depend on each other's
-results or on updated telemetry; make those requests in separate turns. Keep all
+sequentially, and the application—not you—adds the configured delay between
+executions. Do not wait, insert get_telemetry, or ask for another turn between
+independent actions in a requested sequence. Emit all independent sequence
+actions as tool calls in the requested order in the same response. Use
+get_telemetry when the user asks for it or when a safety decision genuinely
+requires current telemetry, not merely to pause between movement legs. Keep all
 motion conservative. The operator remains responsible for visual line of sight,
-legal operation, failsafes, and immediate control. When a request contains a
-sequence of independent actions, return the complete sequence as tool calls
-when possible; the application executes returned calls in order."""
+legal operation, failsafes, and immediate control."""
 
 MAX_TOOL_ROUNDS = 12
 
@@ -132,3 +135,120 @@ class CohereDroneAgent:
             if remaining > 0:
                 time.sleep(remaining)
         self._last_tool_execution_at = time.monotonic()
+
+
+class OpenAIDroneAgent:
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        tools: DroneTools,
+        tool_batch_observer: Callable[
+            [list[tuple[str, dict[str, Any]]]], bool | ToolApproval
+        ]
+        | None = None,
+        tool_executor: Callable[[str, dict[str, Any]], Any] | None = None,
+    ) -> None:
+        self.client = OpenAI(api_key=api_key)
+        self.model = model
+        self.tools = tools
+        self.tool_call_delay_s = tools.settings.tool_call_delay_s
+        self.tool_batch_observer = tool_batch_observer
+        self.tool_executor = tool_executor or tools.execute
+        self._last_tool_execution_at: float | None = None
+        self.input_items: list[Any] = []
+
+    def respond(self, user_text: str) -> str:
+        self.input_items.append({"role": "user", "content": user_text})
+        for _ in range(MAX_TOOL_ROUNDS):
+            response = self.client.responses.create(
+                model=self.model,
+                instructions=SYSTEM_PROMPT,
+                tools=self._tool_definitions(),
+                input=self.input_items,
+            )
+            self.input_items.extend(response.output)
+            calls = [
+                item for item in response.output if item.type == "function_call"
+            ]
+            if not calls:
+                return response.output_text or "(The model returned no text.)"
+
+            for call in calls:
+                result = self._execute_call(
+                    call.name,
+                    call.arguments,
+                )
+                self.input_items.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": call.call_id,
+                        "output": json.dumps(result),
+                    }
+                )
+        raise RuntimeError("OpenAI exceeded the maximum tool-use rounds")
+
+    def _tool_definitions(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "type": "function",
+                "name": definition["function"]["name"],
+                "description": definition["function"]["description"],
+                "parameters": definition["function"]["parameters"],
+            }
+            for definition in self.tools.definitions
+        ]
+
+    def _execute_call(self, name: str, raw_arguments: str) -> dict[str, Any]:
+        try:
+            arguments = json.loads(raw_arguments or "{}")
+        except (ValueError, TypeError) as error:
+            return {"error": str(error)}
+        try:
+            approved = True
+            skip_delay = False
+            if self.tool_batch_observer is not None:
+                approval = self.tool_batch_observer([(name, arguments)])
+                if isinstance(approval, ToolApproval):
+                    approved = approval.approved
+                    skip_delay = approval.skip_delay
+                else:
+                    approved = approval
+            if not approved:
+                return {"error": "Operator denied this tool call."}
+            if skip_delay:
+                self._last_tool_execution_at = time.monotonic()
+            else:
+                self._wait_between_tools()
+            return {"result": self.tool_executor(name, arguments)}
+        except (OSError, ValueError, TypeError, RuntimeError, TimeoutError) as error:
+            return {"error": str(error)}
+
+    def _wait_between_tools(self) -> None:
+        if self._last_tool_execution_at is not None:
+            elapsed = time.monotonic() - self._last_tool_execution_at
+            remaining = self.tool_call_delay_s - elapsed
+            if remaining > 0:
+                time.sleep(remaining)
+        self._last_tool_execution_at = time.monotonic()
+
+
+def create_agent(
+    provider: str,
+    api_key: str,
+    model: str,
+    tools: DroneTools,
+    tool_batch_observer: Callable[
+        [list[tuple[str, dict[str, Any]]]], bool | ToolApproval
+    ]
+    | None = None,
+    tool_executor: Callable[[str, dict[str, Any]], Any] | None = None,
+) -> CohereDroneAgent | OpenAIDroneAgent:
+    agent_type = CohereDroneAgent if provider == "cohere" else OpenAIDroneAgent
+    return agent_type(
+        api_key,
+        model,
+        tools,
+        tool_batch_observer=tool_batch_observer,
+        tool_executor=tool_executor,
+    )

@@ -35,12 +35,24 @@ class Settings:
     heartbeat_timeout_s: float
     command_timeout_s: float
     tool_call_delay_s: float = 2
+    provider: str = "cohere"
+    openai_api_key: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
+        provider = os.getenv("LLM_PROVIDER", "cohere").strip().lower()
+        if provider not in {"cohere", "openai"}:
+            raise ValueError("LLM_PROVIDER must be 'cohere' or 'openai'")
+        model = os.getenv(
+            "MODEL",
+            os.getenv(
+                "COHERE_MODEL" if provider == "cohere" else "OPENAI_MODEL",
+                "command-a-plus-05-2026" if provider == "cohere" else "gpt-6-luna",
+            ),
+        )
         settings = cls(
             cohere_api_key=os.getenv("COHERE_API_KEY", ""),
-            model=os.getenv("COHERE_MODEL", "command-a-plus-05-2026"),
+            model=model,
             mavlink_connection=os.getenv(
                 "MAVLINK_CONNECTION", "udpin:127.0.0.1:14550"
             ),
@@ -52,9 +64,13 @@ class Settings:
             heartbeat_timeout_s=_positive_float("HEARTBEAT_TIMEOUT_S", 10),
             command_timeout_s=_positive_float("COMMAND_TIMEOUT_S", 5),
             tool_call_delay_s=_positive_float("TOOL_CALL_DELAY_S", 2),
+            provider=provider,
+            openai_api_key=os.getenv("OPENAI_API_KEY", ""),
         )
-        if not settings.cohere_api_key:
-            raise ValueError("COHERE_API_KEY is required")
+        if settings.provider == "cohere" and not settings.cohere_api_key:
+            raise ValueError("COHERE_API_KEY is required when LLM_PROVIDER=cohere")
+        if settings.provider == "openai" and not settings.openai_api_key:
+            raise ValueError("OPENAI_API_KEY is required when LLM_PROVIDER=openai")
         if settings.max_altitude_m > 30:
             raise ValueError("MAX_ALTITUDE_M cannot exceed the hard limit of 30 m")
         if settings.max_move_m > 10:

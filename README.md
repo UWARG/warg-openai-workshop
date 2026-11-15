@@ -1,13 +1,14 @@
 # MAVLink LLM Pilot
 
-A Python CLI that uses Cohere tool calling to read telemetry and issue a small,
-bounded set of MAVLink commands. It expects a human pilot to stay in control.
+A Python CLI that uses OpenAI or Cohere tool calling to read telemetry and issue
+a small, bounded set of MAVLink commands. It expects a human pilot to stay in
+control.
 
 ## Setup
 
 1. Install [uv](https://docs.astral.sh/uv/) and Python 3.11 or newer.
-2. Copy `.env.example` to `.env`, add your Cohere API key, and keep
-   `LIVE_COMMANDS=false` while setting up.
+2. Copy `.env.example` to `.env`, set `LLM_PROVIDER` to `openai` or `cohere`,
+   add the matching API key, and keep `LIVE_COMMANDS=false` while setting up.
 3. Configure Mission Planner to forward MAVLink to `127.0.0.1:14550`.
    Change `MAVLINK_CONNECTION` if you use a different local endpoint.
 4. Install the project and run it:
@@ -24,18 +25,17 @@ uv run mavlink-llm-pilot-web
 ```
 
 Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The dashboard polls
-MAVLink telemetry every 1.5 seconds. The chat uses the same Cohere tool-calling
-agent as the CLI. Browser speech recognition is available in supported browsers
+MAVLink telemetry every 1.5 seconds. The chat uses the configured Cohere or
+OpenAI tool-calling agent. Browser speech recognition is available in supported browsers
 such as Chrome; typed input remains available everywhere. Checking the live
 confirmation box is required for a web chat request that may execute a flight
 command.
 
 The app waits for an autopilot heartbeat before opening the chat. The default
 MAVLink endpoint is a loopback-only UDP listener; do not expose it to an
-untrusted network. Telemetry and prompts are sent to Cohere for tool use.
-The default Cohere model is `command-a-plus-05-2026`, which Cohere's tool-use
-example uses. The app does not send `tool_choice`, which that model does not
-support.
+untrusted network. Telemetry and prompts are sent to the configured provider for tool use.
+`COHERE_MODEL` defaults to `command-a-plus-05-2026`; `OPENAI_MODEL` defaults to
+`gpt-6-luna`. `MODEL` can override either provider-specific model setting.
 Tools requested together are executed sequentially with a minimum
 `TOOL_CALL_DELAY_S` pause between calls (default 2 seconds; allowed range
 1–30 seconds). Calls that depend on a prior action's outcome or updated

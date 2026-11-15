@@ -1,1 +1,1 @@
-"""Cohere-powered, safety-gated MAVLink assistant."""
+"""Safety-gated, tool-calling MAVLink assistant."""

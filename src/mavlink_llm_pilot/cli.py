@@ -1,10 +1,10 @@
 import sys
 
-import cohere
 from cohere.core.api_error import ApiError
+from openai import APIError
 from dotenv import load_dotenv
 
-from .agent import CohereDroneAgent
+from .agent import create_agent
 from .config import Settings
 from .mavlink import MavlinkController
 from .safety import SafetyPolicy
@@ -22,8 +22,14 @@ def main() -> None:
     controller = MavlinkController(settings)
     try:
         controller.connect()
-        agent = CohereDroneAgent(
-            settings.cohere_api_key,
+        api_key = (
+            settings.cohere_api_key
+            if settings.provider == "cohere"
+            else settings.openai_api_key
+        )
+        agent = create_agent(
+            settings.provider,
+            api_key,
             settings.model,
             DroneTools(controller, settings, SafetyPolicy(settings)),
         )
@@ -42,8 +48,8 @@ def main() -> None:
                 continue
             try:
                 print(f"\nPilot: {agent.respond(user_text)}")
-            except ApiError as error:
-                print(f"Cohere API error: {error}", file=sys.stderr)
+            except (ApiError, APIError) as error:
+                print(f"{settings.provider.title()} API error: {error}", file=sys.stderr)
             except (RuntimeError, TimeoutError, OSError) as error:
                 print(f"Operation failed: {error}", file=sys.stderr)
     except (OSError, TimeoutError) as error:

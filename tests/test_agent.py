@@ -2,15 +2,15 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, call, patch
 
-from mavlink_llm_pilot.agent import CohereDroneAgent
+from mavlink_llm_pilot.agent import CohereDroneAgent, OpenAIDroneAgent
 from mavlink_llm_pilot.config import Settings
 from mavlink_llm_pilot.safety import SafetyPolicy
 from mavlink_llm_pilot.tools import DroneTools
 
 
 class AgentTests(unittest.TestCase):
-    def test_turn_runs_multiple_tools_in_order_with_delay(self) -> None:
-        settings = Settings(
+    def _settings(self) -> Settings:
+        return Settings(
             cohere_api_key="test-key",
             model="command-a-plus-05-2026",
             mavlink_connection="udpin:127.0.0.1:14550",
@@ -22,6 +22,9 @@ class AgentTests(unittest.TestCase):
             heartbeat_timeout_s=1,
             command_timeout_s=1,
         )
+
+    def test_turn_runs_multiple_tools_in_order_with_delay(self) -> None:
+        settings = self._settings()
         controller = Mock()
         controller.get_telemetry.return_value = {"armed": False}
         tools = DroneTools(controller, settings, SafetyPolicy(settings))
@@ -141,6 +144,39 @@ class AgentTests(unittest.TestCase):
         )
         controller.land.assert_not_called()
         controller.get_telemetry.assert_not_called()
+
+    def test_openai_responses_tool_call_executes_and_returns_output(self) -> None:
+        settings = self._settings()
+        controller = Mock()
+        controller.get_telemetry.return_value = {"armed": False}
+        tools = DroneTools(controller, settings, SafetyPolicy(settings))
+        agent = OpenAIDroneAgent("test-key", "gpt-6-luna", tools)
+        agent.client = Mock()
+        call_item = SimpleNamespace(
+            type="function_call",
+            call_id="call-1",
+            name="get_telemetry",
+            arguments="{}",
+        )
+        agent.client.responses.create.side_effect = [
+            SimpleNamespace(output=[call_item]),
+            SimpleNamespace(output=[], output_text="The vehicle is disarmed."),
+        ]
+
+        self.assertEqual(agent.respond("Check the drone."), "The vehicle is disarmed.")
+        controller.get_telemetry.assert_called_once_with()
+        request = agent.client.responses.create.call_args_list[0].kwargs
+        self.assertEqual(request["model"], "gpt-6-luna")
+        self.assertEqual(request["tools"][0]["type"], "function")
+        self.assertEqual(request["tools"][0]["name"], "get_telemetry")
+        self.assertEqual(
+            agent.input_items[-1],
+            {
+                "type": "function_call_output",
+                "call_id": "call-1",
+                "output": '{"result": {"armed": false}}',
+            },
+        )
 
 
 if __name__ == "__main__":

@@ -1,12 +1,13 @@
 [project]
 name = "mavlink-llm-pilot"
 version = "0.1.0"
-description = "A safety-gated Cohere tool-calling assistant for MAVLink drones"
+description = "A safety-gated tool-calling assistant for MAVLink drones"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "cohere>=7.3.1",
     "fastapi>=0.162.4",
+    "openai>=1.0.0",
     "pymavlink>=2.4.50",
     "python-dotenv>=1.2.4",
     "uvicorn[standard]>=0.54.0",
